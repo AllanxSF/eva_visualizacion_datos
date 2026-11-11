@@ -55,11 +55,11 @@ df_base, tablas = cargar(fuente)
 
 with st.sidebar.expander("⚙️ Parámetros del análisis", expanded=False):
     min_votos_cal = st.number_input(
-        "Votos mínimos para considerar la calificación", 0, 1000, 1, key="p_min_votos_cal",
+        "Votos mínimos para considerar la calificación", 0, 1000, 10, key="p_min_votos_cal",
         help="Los títulos sin votos traen calificación 0, que no es una nota real. "
-             "Con 1 se excluyen de los promedios; súbelo para exigir más respaldo.")
+             "Con 10 se excluyen de los promedios; súbelo para exigir más respaldo.")
     umbral_votos = st.number_input("Umbral de votos para el Top mejor evaluados", 0, 50000, 1000, step=100, key="p_umbral")
-    min_pais = st.number_input("Mínimo de títulos por país (mapas)", 1, 500, 10, key="p_min_pais")
+    min_pais = st.number_input("Mínimo de títulos por país (mapas)", 1, 500, 100, key="p_min_pais")
     min_genero = st.number_input("Mínimo de títulos por género", 1, 500, 10, key="p_min_gen")
     top_n = st.slider("Tamaño de los rankings (Top N)", 5, 20, 10, key="p_topn")
 
@@ -113,8 +113,37 @@ div[data-testid="stMetricLabel"] {
 div[data-testid="stMetricValue"] {
     font-size: 28px;
 }
+div[data-testid="stMetric"] {
+    position: relative;
+}
+div[data-testid="stMetricDelta"] {
+    position: absolute;
+    right: 20px;
+    bottom: 24px;
+}
+.pregunta-negocio {
+    margin: 18px 0 12px;
+    padding: 14px 18px;
+    border-left: 5px solid #0072B2;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #eaf4fb 0%, #dcecf8 100%);
+    color: #004c78;
+    font-size: 1.15rem;
+    font-weight: 700;
+    box-shadow: 0 2px 6px rgba(0, 114, 178, 0.14);
+}
+.pregunta-negocio.secundaria {
+    border-left-color: #b8c5d1;
+    background: #ffffff;
+    color: #17324d;
+    box-shadow: 0 2px 6px rgba(23, 50, 77, 0.08);
+}
 </style>
 """, unsafe_allow_html=True)
+
+def pregunta_negocio(texto, secundaria=False):
+    clase = "pregunta-negocio secundaria" if secundaria else "pregunta-negocio"
+    st.markdown(f'<div class="{clase}"> {texto}</div>', unsafe_allow_html=True)
 
 if df_f.empty:
     st.warning("Los filtros actuales no dejan ningún título. Usa **Restablecer filtros** o amplía los rangos.")
@@ -154,14 +183,24 @@ with t_scatter:
     if len(d) < 3:
         st.info("No hay suficientes títulos con calificación válida para este análisis.")
     else:
+        pregunta_negocio("¿Los contenidos más populares también son los mejor evaluados por los usuarios?")
         r_p = d["popularity"].corr(d["calificacion"])
         r_s = d["popularity"].corr(d["calificacion"], method="spearman")
         c1, c2, c3 = st.columns(3)
-        c1.metric("Correlación de Spearman", f"{r_s:.2f}", dd.fuerza(r_s), delta_color="off")
-        c2.metric("Correlación de Pearson", f"{r_p:.2f}", dd.fuerza(r_p), delta_color="off")
+        c1.metric(
+            "Correlación de Spearman", f"{r_s:.2f}", dd.fuerza(r_s), delta_color="off",
+            help="Mide si la popularidad y la calificación aumentan o disminuyen juntas. Va de -1 (relación inversa perfecta) "
+                 "a 1 (relación directa perfecta)."
+        )
+        c2.metric(
+            "Correlación de Pearson", f"{r_p:.2f}", dd.fuerza(r_p), delta_color="off",
+            help="Mide la fuerza y dirección de una relación lineal entre popularidad y "
+                 "calificación. Va de -1 (relación inversa perfecta) a 1 (relación directa "
+                 "perfecta)."
+        )
         c3.metric("Títulos graficados", n_es(len(d)))
 
-        colorear = st.radio("Colorear por", ["Tipo de contenido", "Cantidad de votos"], horizontal=True)
+        colorear = st.radio("", ["Tipo de contenido", "Cantidad de votos"], horizontal=True)
         d["votos_log10"] = np.log10(d["vote_count"].clip(lower=1))
         d["tam"] = 4 + 12 * np.log1p(d["vote_count"]) / np.log1p(max(d["vote_count"].max(), 1))
         comunes = dict(x="popularity", y="calificacion", size="tam", size_max=14, opacity=0.55, log_x=True,
@@ -175,6 +214,10 @@ with t_scatter:
         else:
             fig = px.scatter(d, color="votos_log10", color_continuous_scale="Viridis", **comunes)
         fig.update_layout(height=560, title="Popularidad vs. calificación (tamaño = votos)")
+        st.info(
+            "**Nota:** La popularidad se muestra en escala logarítmica: cada unidad del eje representa "
+            "un incremento multiplicativo, para facilitar la comparación entre títulos."
+        )
         st.plotly_chart(fig, use_container_width=True)
 
 # ───────────────────────── 2. Géneros (req. b, c) ─────────────────────────
@@ -184,6 +227,7 @@ with t_gen:
     if gen_ok.empty:
         st.info(f"Ningún género alcanza el mínimo de {min_genero} títulos con los filtros actuales.")
     else:
+        pregunta_negocio("¿Qué géneros concentran mayor cantidad de títulos y cuáles presentan mejor desempeño en popularidad y calificación?")
         mostrar = gen_ok.head(15)
         orden = mostrar["genero"].tolist()
         c1, c2 = st.columns(2)
@@ -207,28 +251,46 @@ with t_gen:
             fig.update_yaxes(autorange="reversed"); fig.update_layout(height=520)
             st.plotly_chart(fig, use_container_width=True)
 
+        st.subheader("Treemap de géneros")
+        st.info("**Nota:** Tamaño = cantidad de títulos.")
         fig = px.treemap(gen_ok, path=["genero"], values="n", color="calificacion_prom",
                          color_continuous_scale="Viridis",
                          hover_data={"n": ":,", "calificacion_prom": ":.2f", "popularidad_mediana": ":.1f"},
                          labels={"n": "Títulos", "calificacion_prom": "Calificación prom.",
-                                 "popularidad_mediana": "Popularidad mediana"},
-                         title="Treemap de géneros por volumen (color = calificación promedio)")
+                                 "popularidad_mediana": "Popularidad mediana"})
         fig.update_traces(textinfo="label+value"); fig.update_layout(height=480)
         st.plotly_chart(fig, use_container_width=True)
 
 # ───────────────────────── 3. Rankings (req. d, e) ─────────────────────────
 with t_rank:
+    pregunta_negocio("¿Qué contenidos, directores y actores destacan por su desempeño y presencia en el catálogo?")
     st.subheader(f"Top {top_n} mejor evaluados (mínimo {n_es(umbral_votos)} votos)")
     elegibles = df_f[df_f["vote_count"] >= umbral_votos]
     if elegibles.empty:
         st.info("Ningún título alcanza el umbral de votos con los filtros actuales. Bájalo en *Parámetros del análisis*.")
     else:
         top_ev = elegibles.sort_values(["vote_average", "vote_count"], ascending=False).head(top_n)
+        top_ev["etiqueta_calificacion"] = top_ev["vote_average"].map(lambda valor: f"{valor:.2f}")
+        top_ev["etiqueta_votos"] = top_ev["vote_count"].map(lambda valor: f"{n_es(valor)} votos")
         fig = px.bar(top_ev, x="vote_average", y="etiqueta", orientation="h", color="type",
-                     color_discrete_map=COLOR_TIPO, text="vote_average",
-                     hover_data={"vote_count": ":,", "popularity": ":.1f"},
-                     labels={"vote_average": "Calificación", "etiqueta": "", "type": "Tipo", "vote_count": "Votos"})
-        fig.update_traces(texttemplate="%{text:.2f}")
+                     color_discrete_map=COLOR_TIPO, text="etiqueta_calificacion",
+                     labels={"vote_average": "Calificación", "etiqueta": "", "type": "Tipo"})
+        fig.update_traces(
+            texttemplate="%{text}",
+            textposition="inside",
+            hovertemplate="Calificación: %{x:.2f}<br>Popularidad: %{customdata[0]:.1f}<extra></extra>",
+            customdata=top_ev[["popularity"]].to_numpy(),
+        )
+        for _, fila in top_ev.iterrows():
+            fig.add_annotation(
+                x=float(fila["vote_average"]),
+                y=fila["etiqueta"],
+                text=fila["etiqueta_votos"],
+                xanchor="left",
+                xshift=6,
+                showarrow=False,
+                font=dict(color="#5f6b7a"),
+            )
         fig.update_yaxes(autorange="reversed"); fig.update_xaxes(range=[0, 10]); fig.update_layout(height=460)
         st.plotly_chart(fig, use_container_width=True)
 
@@ -258,7 +320,8 @@ with t_pais:
     if pais_ok.empty:
         st.info("Ningún país alcanza el mínimo de títulos con los filtros actuales.")
     else:
-        metrica = st.radio("Métrica del mapa", ["Calificación promedio", "Popularidad mediana"], horizontal=True)
+        pregunta_negocio("¿Qué países tienen mayor presencia en el catálogo y cuáles muestran mejores indicadores de desempeño?")
+        metrica = st.radio("", ["Calificación promedio", "Popularidad mediana"], horizontal=True)
         col_m, escala = (("calificacion_prom", "Viridis") if metrica == "Calificación promedio"
                          else ("popularidad_mediana", "Plasma"))
         fig = px.choropleth(pais_ok, locations="iso3", color=col_m, hover_name="pais", color_continuous_scale=escala,
@@ -279,10 +342,7 @@ with t_pais:
 
 # ───────────────────────── 5. Finanzas (req. g) ─────────────────────────
 with t_fin:
-    st.info(
-        f"**Nota:** el análisis financiero incluye **solo películas con presupuesto e ingresos informados** "
-        f"(valores > 0 y escala validada). Con los filtros actuales son **{n_es(len(df_fin))} de {n_es(len(df_f))} títulos** "
-        f"({len(df_fin) / max(len(df_f), 1):.1%}). Las series y las películas sin datos financieros no se incluyen.")
+    pregunta_negocio("¿Qué películas generan mayores ingresos en relación con su presupuesto y cuáles presentan mejores resultados financieros?")
     if df_fin.empty:
         st.warning("No hay películas con datos financieros válidos para los filtros actuales.")
     else:
@@ -295,6 +355,9 @@ with t_fin:
                     help="(Total ingresos − Total presupuesto) / Total presupuesto, sobre el conjunto filtrado.")
         c[4].metric("ROI mediano por película", f"{n_es(kf['roi_mediano'], 1)} %")
 
+        st.info(
+                f"**Nota:** el análisis financiero incluye solo películas con presupuesto e ingresos informados "
+                f"(valores > 0 y escala validada).")
         corr_fin = df_fin["budget_musd"].corr(df_fin["revenue_musd"])
         fig = px.scatter(df_fin, x="budget_musd", y="revenue_musd", color="roi_band", log_x=True, log_y=True,
                          color_discrete_map=COLOR_ROI, category_orders={"roi_band": ["Bajo", "Medio", "Alto"]},
@@ -323,11 +386,12 @@ with t_fin:
 
 # ───────────────────────── 6. Preguntas de negocio (req. i) ─────────────────────────
 with t_preg:
+    pregunta_negocio("¿Qué decisiones estratégicas podemos tomar a partir del análisis del catálogo y su desempeño?")
     gen_all = dd.resumen_por(gen_df, "genero")
     gen_cand = gen_all[gen_all["n"] >= min_genero]
     cols_g = _con_roi(["n", "calificacion_prom", "popularidad_mediana"], gen_cand)
     gen_sc = dd.puntaje(gen_cand, cols_g)
-    st.subheader("¿Qué géneros priorizar?")
+    pregunta_negocio("¿Qué géneros priorizar?", secundaria=True)
     if gen_sc.empty:
         st.info("No hay géneros con muestra suficiente.")
     else:
@@ -347,19 +411,31 @@ with t_preg:
         ax.set_ylabel(""); plt.setp(ax.get_xticklabels(), rotation=20, ha="right")
         st.pyplot(fig); plt.close(fig)
 
-    st.subheader("¿Qué países son oportunidad?")
+    pregunta_negocio("¿Qué países son oportunidad?", secundaria=True)
     cols_p = _con_roi(["calificacion_prom", "popularidad_mediana"], pais_ok)
     pais_sc = dd.puntaje(pais_ok, cols_p) if len(pais_ok) else pais_ok
     if len(pais_sc):
         pais_sc["cuota_titulos_%"] = pais_sc["n"] / len(df_f) * 100
         st.markdown(f"Mejor desempeño combinado entre países con ≥ {min_pais} títulos: "
                     f"**{', '.join(pais_sc.head(3)['pais'])}**.")
-        st.dataframe(pais_sc[["pais", "n", "cuota_titulos_%"] + cols_p + ["puntaje"]].head(10).round(2),
-                     use_container_width=True, hide_index=True)
+        tabla_paises = pais_sc[["pais", "n", "cuota_titulos_%"] + cols_p + ["puntaje"]].head(10).round(2)
+        tabla_html = tabla_paises.to_html(index=False, border=0)
+        tabla_html = tabla_html.replace(
+            "<table",
+            '<table style="width:100%; border-collapse:collapse; color:#17324d;"',
+        ).replace(
+            "<th>",
+            '<th style="background-color:#cfe8f7; color:#004c78; '
+            'font-weight:bold; padding:8px; text-align:left; border:1px solid #d9e0e8;">',
+        ).replace(
+            "<td>",
+            '<td style="padding:8px; border:1px solid #e1e6eb;">',
+        )
+        st.markdown(tabla_html, unsafe_allow_html=True)
     else:
         st.info("No hay países con muestra suficiente.")
 
-    st.subheader("¿Qué películas fueron exitosas con presupuestos reducidos?")
+    pregunta_negocio("¿Qué películas fueron exitosas con presupuestos reducidos?", secundaria=True)
     if df_fin.empty:
         st.info("Sin películas con datos financieros para los filtros actuales.")
     else:
@@ -371,7 +447,7 @@ with t_preg:
             st.markdown(f"**{n_es(len(ex))}** películas cumplen presupuesto ≤ {20} M USD y ROI ≥ {100} %. "
                         f"Mayores beneficios: **{', '.join(ex.head(3)['etiqueta'])}**. ")
 
-    st.subheader("¿Existe relación entre popularidad y calificación?")
+    pregunta_negocio("¿Existe relación entre popularidad y calificación?", secundaria=True)
     dv = df_f.dropna(subset=["calificacion"])
     if len(dv) > 3:
         rs = dv["popularity"].corr(dv["calificacion"], method="spearman")
